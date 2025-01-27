@@ -1,0 +1,147 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-arm64-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           Int             @id @default(autoincrement())
+  email        String          @unique
+  name         String?
+  hashedPass   String
+  organisation Organisation?   @relation("OrganisationUsers", fields: [orgId], references: [id])
+  orgId        Int?
+  role         String?
+  hasAccess    Boolean
+  department   String?
+  access_list  AccessRequest[]
+  ownedOrg     Organisation?   @relation("OrganisationOwner")
+}
+
+model Room {
+  id           Int          @id @default(autoincrement())
+  name         String
+  department   String?
+  lab          Boolean?
+  timetable    String?
+  organisation Organisation @relation(fields: [orgId], references: [id])
+  orgId        Int
+}
+
+model Teacher {
+  id                   Int          @id @default(autoincrement())
+  name                 String
+  initials             String?
+  email                String?
+  department           String?
+  alternateDepartments Departments[] @relation("deparmentTeachers")
+  timetable            String?
+  labtable             String?
+  organisation         Organisation @relation(fields: [orgId], references: [id])
+  orgId                Int
+  @@unique([name, orgId, department])
+}
+
+model Course {
+  id           Int          @id @default(autoincrement())
+  name         String
+  code         String
+  department   String?
+  semester     Int?
+  credits      Int?
+  bFactor      Int?
+  organisation Organisation @relation(fields: [orgId], references: [id])
+  orgId        Int
+}
+
+model Lab {
+  id           Int          @id @default(autoincrement())
+  name         String
+  department   String?
+  semester     Int?
+  batches      String?
+  teachers     String?
+  rooms        String?
+  timetable    String?
+  organisation Organisation @relation(fields: [orgId], references: [id])
+  orgId        Int
+}
+
+model Elective {
+  id           Int          @id @default(autoincrement())
+  name         String
+  department   String?
+  courses      String?
+  teachers     String?
+  rooms        String?
+  semester     Int?
+  timetable    String?
+  organisation Organisation @relation(fields: [orgId], references: [id])
+  orgId        Int
+}
+
+model Organisation {
+  id                  Int             @id @default(autoincrement())
+  name                String
+  no_of_sections      Int
+  no_of_teachers      Int
+  no_of_students      Int
+  depts_list          String
+  approved            Boolean
+  electives           Elective[]
+  labs                Lab[]
+  courses             Course[]
+  teachers            Teacher[]
+  rooms               Room[]
+  sections            Section[]
+  users               User[]          @relation("OrganisationUsers")
+  access_request_list AccessRequest[]
+  invite_code         String?
+  owner               User?           @relation("OrganisationOwner", fields: [ownerId], references: [id])
+  ownerId             Int?            @unique
+
+}
+
+model AccessRequest {
+  id           Int          @id @default(autoincrement())
+  user         User         @relation(fields: [userId], references: [id])
+  userId       Int
+  department String?
+  organisation Organisation @relation(fields: [orgId], references: [id])
+  orgId        Int
+  level        String
+}
+
+model Section{
+  id     Int          @id @default(autoincrement())
+  name   String
+  courses String[]
+  teachers String[]
+  rooms String[]
+  elective String?
+  lab String?
+  defaultRoom String?
+  semester Int?
+  organisation Organisation @relation(fields: [orgId], references: [id])
+  orgId  Int
+  timeTable String
+  roomTable String?
+  courseTable String?
+}
+model Departments{
+  id Int @id @default(autoincrement())
+  name String
+  orgId Int?
+  teachers Teacher[] @relation("deparmentTeachers")
+  @@unique([name, orgId])
+}
