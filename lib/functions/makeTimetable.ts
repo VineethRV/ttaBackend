@@ -1,7 +1,7 @@
 import { peekCourse } from "../actions/course";
 import { PrismaClient } from "@prisma/client";
 import * as auth from "../actions/auth";
-import { getRooms, peekRoom } from "../actions/room";
+import { getRooms, peekRoom, updateRoom } from "../actions/room";
 import { peekTeacher, updateTeachers } from "../actions/teacher";
 import { statusCodes } from "../types/statusCodes";
 import { convertStringToTable, convertTableToString, scoreRooms, scoreTeachers } from "./common";
@@ -14,11 +14,13 @@ const prisma = new PrismaClient();
 //current function is for non admins.
 let randomFactor=0.1;//introduces some randomness in the allocation of courses to the timetable
 let endFactor=0.0025;
+
 type returnStrcture={
     timetable:string[][]|null,
     roomtable:string[][]|null,
     display:string[][]|null
 }
+
 export async function suggestTimetable(
     token: string,
     block: string,
@@ -382,6 +384,7 @@ export async function recommendCourse(
         };
     }
 }
+
 export async function saveTimetable(
     JWTtoken: string,
     name: string,
@@ -395,12 +398,13 @@ export async function saveTimetable(
     timetable:string,
     roomTimetable:string,
     courseTimetable:string
-): Promise<{status:number}> {
+): Promise<{status:number,section:any|null}> {
  try {
     const { status, user } = await auth.getPosition(JWTtoken);
     if (user?.orgId == null)
       return {
         status: statusCodes.BAD_REQUEST,
+        section: null,
       };
     if (status == statusCodes.OK) {
       if (user && user.role != "viewer") {
@@ -428,6 +432,7 @@ export async function saveTimetable(
         if (duplicates||(courses.length!==teachers.length)||courses.length!==rooms.length) {
           return {
             status: statusCodes.BAD_REQUEST,
+            section: null,
           };
         }
         const department=user.department
@@ -447,14 +452,16 @@ export async function saveTimetable(
                         console.log(tTeacher)
                         const teacherResponse = await peekTeacher(JWTtoken, tTeacher,department);
                         if (teacherResponse.status !== statusCodes.OK || !teacherResponse.teacher) {
-                            return { status: statusCodes.INTERNAL_SERVER_ERROR  };
+                            return { status: statusCodes.INTERNAL_SERVER_ERROR,
+                            section: null
+                              };
                         }
                         const tTeacherTT=convertStringToTable(teacherResponse.teacher.timetable)
                         tTeacherTT[i][j]=name;
                         teacherResponse.teacher.timetable=convertTableToString(tTeacherTT)
                         const updateteacher=await updateTeachers(JWTtoken,tTeacher,department,teacherResponse.teacher)
                         if (updateteacher.status !== statusCodes.OK || !updateteacher.teacher) {
-                            return { status: statusCodes.INTERNAL_SERVER_ERROR  };
+                            return { status: statusCodes.INTERNAL_SERVER_ERROR ,section: null };
                         }
                         console.log(updateteacher.teacher)
                         break;
@@ -464,11 +471,12 @@ export async function saveTimetable(
             }
           }
           const roomTT=convertStringToTable(roomTimetable)
-          console.log(roomTT)
+          console.log("roomtTT",roomTT)
           for(let i=0;i<roomTT.length;i++)
           {
             for(let j=0;j<roomTT[i].length;j++)
             {
+
                 if(roomTT[i][j]!=="0")
                 {
                      const existingRoom = await prisma.room.findFirst({
@@ -479,10 +487,11 @@ export async function saveTimetable(
                                 name: roomTT[i][j],
                               },
                             });
-                    
+                            console.log("existingRoom",existingRoom)
                             if (!existingRoom) {
                               return {
                                 status: statusCodes.NOT_FOUND,
+                                section: null,
                               };
                             }
                             const TT=convertStringToTable(existingRoom.timetable)
@@ -498,43 +507,55 @@ export async function saveTimetable(
                     }
                 }
             }
+            console.log("We came till here;")
         return {
           status: statusCodes.OK,
+          section: newCourse
         };
       }
       // If role is viewer
       return {
-        status: statusCodes.FORBIDDEN
+        status: statusCodes.FORBIDDEN,
+        section: null,
       };
     }
     // If status is not OK
     return {
       status: status,
+        section: null,
     };
   } catch (e) {
     console.error(e);
     return {
-      status: statusCodes.INTERNAL_SERVER_ERROR
+      status: statusCodes.INTERNAL_SERVER_ERROR,
+      section: null,
     };
   }
 }
-
+interface retType {
+    id: number;
+    name: string;
+    courses: string[];
+    teachers: string[];
+    rooms: string[];
+    temporary?: boolean
+}
 export async function getTimetable(
     JWTtoken: string,
     semester: number
 ): Promise<{ status: number; section: any[] | null }>{
     try{
          const { status, user } = await auth.getPosition(JWTtoken);
-        
+            let section:retType[];
             if (user?.orgId == null) {
               return {
                 status: statusCodes.BAD_REQUEST,
                 section: null,
               };
             }
-        
-            if (status == statusCodes.OK && user) {
-                 let section = await prisma.section.findMany({
+            
+            if (status == statusCodes.OK && user ) {
+                 section = await prisma.section.findMany({
                   where: {
                     orgId: user.orgId,
                     semester: semester,
@@ -547,11 +568,43 @@ export async function getTimetable(
                     rooms:true
                   },
                 })
+                console.log("section found",section)
+                let tempSections= await prisma.tempSection.findMany({
+                    where:{
+                        orgId:user.orgId,
+                        semester:semester,
+                    }
+                })
+                console.log("temps Found:",tempSections)
+                for (const tempSection of tempSections) {
+                    const teacherCourses = tempSection.teacherCourse.split(',');
+                    const courses: string[] = [];
+                    const teachers: string[] = [];
+                    const rooms: string[] = [];
+
+                    for (const tc of teacherCourses) {
+                        const [teacher, course] = tc.split('-');
+                        teachers.push(teacher);
+                        courses.push(course);
+                        rooms.push('0');
+                    }
+
+                    section.push({
+                        id: tempSection.id,
+                        name: tempSection.name+'(Temporary)',
+                        courses: courses,
+                        teachers: teachers,
+                        rooms: rooms,
+                        temporary:true
+                    });
+                }
+                // console.log("tempSections: ")
               return {
                 status: statusCodes.OK,
                 section: section,
               };
-            } else {
+            } 
+            else {
               return {
                 status: status,
                 section: null,
@@ -656,10 +709,12 @@ export async function updateTimetable(
   id: number,
   oldname: string,
   section: Section,
+  teachers: string[],
+  rooms: string[]
 ): Promise<{ status: number }> {
   try {
+    console.log("Section i got",section)
     const { status, user } = await auth.getPosition(JWTtoken);
-
     if (user?.orgId == null) {
       return {
         status: statusCodes.BAD_REQUEST,
@@ -694,6 +749,56 @@ export async function updateTimetable(
             courseTable:section.courseTable
         },
       });
+      console.log("updated Sections",updatedSection)
+      //Deleting from old teachers
+      teachers.forEach(async (teacher) => {
+        console.log("teacher",teacher)
+        const teacherResponse = await peekTeacher(JWTtoken, teacher,user.department);
+        if (teacherResponse.status !== statusCodes.OK || !teacherResponse.teacher) {
+          return { status: statusCodes.INTERNAL_SERVER_ERROR };
+        }
+        const tTeacherTT=convertStringToTable(teacherResponse.teacher.timetable)
+        for(let i=0;i<tTeacherTT.length;i++)
+        {
+            for(let j=0;j<tTeacherTT[i].length;j++)
+            {
+                if(tTeacherTT[i][j]===oldname)
+                {
+                    tTeacherTT[i][j]="Free"
+                }
+            }
+        }
+        teacherResponse.teacher.timetable=convertTableToString(tTeacherTT)
+        const updateteacher=await updateTeachers(JWTtoken,teacher,user.department,teacherResponse.teacher)
+        if (updateteacher.status !== statusCodes.OK || !updateteacher.teacher) {
+            return { status: statusCodes.INTERNAL_SERVER_ERROR  };
+        }
+      })
+//Deleting from old rooms
+      rooms.forEach(async (room) => {
+        if(room!=='0'){
+        const roomResponse = await peekRoom(JWTtoken, room,user.department);
+        if (roomResponse.status !== statusCodes.OK || !roomResponse.room) {
+            return { status: statusCodes.INTERNAL_SERVER_ERROR };
+          }
+        const TT=convertStringToTable(roomResponse.room.timetable)
+        for(let i=0;i<TT.length;i++)
+        {
+            for(let j=0;j<TT[i].length;j++)
+            {
+                if(TT[i][j]===oldname)
+                {
+                    TT[i][j]="Free"
+                }
+            }
+        }  
+        roomResponse.room.timetable=convertTableToString(TT)
+        const updateroom=await updateRoom(JWTtoken,room,user.department,roomResponse.room)
+        if (updateroom.status !== statusCodes.OK ) {
+            return { status: statusCodes.INTERNAL_SERVER_ERROR  };
+        }
+    }
+      })
       const department=user.department
       const tt=convertStringToTable(section.timeTable)
       for (let i = 0; i < tt.length; i++) {
@@ -768,4 +873,160 @@ export async function updateTimetable(
     console.error(error);
     return { status: statusCodes.INTERNAL_SERVER_ERROR };
   }
+}
+
+interface teacherByte{
+    teacherInitials:string,
+    sections:string[]
+    semesters:number[]
+    courseCodes:string[]
+}
+interface tempSection{
+        name: string;
+        semester: number | null;
+        orgId: number;
+        department: string | null;
+        teacherCourse: string;
+}
+
+export async function createTemptable(JWTtoken:string,data:teacherByte[]):Promise<{status:number,returnVal:string|null}> {
+    let errMessage:string="Call to createTemptable failed";
+    console.log("bande");
+    try{
+        let user=await auth.getPosition(JWTtoken);
+        let tempSection:tempSection[]=[];
+        if(user.status!==statusCodes.OK){
+            return{
+                status:user.status,
+                returnVal:"Error while fetching user details"
+            }
+        }
+        if(user.user?.orgId){
+            errMessage="failed to find temporary sections"
+            for (const teacher of data) {
+                for (let i = 0; i < teacher.sections.length; i++) {
+                    const existingSection = tempSection.find(section => 
+                        section.name === teacher.sections[i] && 
+                        section.semester === teacher.semesters[i]
+                    );
+                    if (!existingSection) {
+                        tempSection.push({
+                            name: teacher.sections[i],
+                            semester: teacher.semesters[i],
+                            orgId: user.user?.orgId ,
+                            department: user.user?.department,
+                            teacherCourse: `${teacher.teacherInitials}-${teacher.courseCodes[i]}`
+                        });
+                    }
+                    else{
+                        if (existingSection) {
+                            existingSection.teacherCourse += `,${teacher.teacherInitials}-${teacher.courseCodes[i]}`;
+                        }
+                    }
+                }
+            }  
+            errMessage="Failed to update temporary Sections locally"
+            try {
+                // Delete existing entries for this organization
+                // for (const section of tempSection) {
+                //     await prisma.tempSection.deleteMany({
+                //         where: {
+                //         orgId: user.user.orgId,
+                //         department: user.user.department,
+                //         name: section.name,
+                //         semester: section.semester || 0
+                //         }
+                //     });
+                // }
+                
+                // Create new entries
+                await prisma.tempSection.createMany({
+                    data: tempSection,
+                    skipDuplicates: true
+                });
+                return {
+                    status: statusCodes.OK,
+                    returnVal: "Done!"
+                };
+            } 
+            catch (error) {
+                console.error(error);
+                return {
+                    status: statusCodes.INTERNAL_SERVER_ERROR,
+                    returnVal: "Failed to update database with temporary sections"
+                };
+            }
+        }
+        return{
+            status:statusCodes.BAD_REQUEST,
+            returnVal:"User details not found"
+        }
+    }
+    catch{
+        return{
+            status:statusCodes.INTERNAL_SERVER_ERROR,
+            returnVal:errMessage
+        }
+    }
+}   
+
+export async function peekTempTable(token:string,id:number):Promise<{status:number,retVal:any}> {
+    let {status,user}=await auth.getPosition(token)
+    try{    
+        if(status==statusCodes.OK && user?.orgId){
+            const retVal=await prisma.tempSection.findUnique({
+                where:{
+                    orgId:user.orgId,
+                    id:id
+                }
+            })
+            console.log("Retval: ",retVal)
+            return {
+                status:statusCodes.OK,
+                retVal:retVal
+            }
+        }
+        return{
+            status:statusCodes.UNAUTHORIZED,
+            retVal:"User not eligible to make this decsion"
+        }
+    }
+    catch(e){
+        return{
+            status:statusCodes.INTERNAL_SERVER_ERROR,
+            retVal:e
+        }
+    }
+}
+export async function deleteTempTable(
+    JWTtoken: string,
+    id: number
+): Promise<{ status: number }> {
+    try {
+        const { status, user } = await auth.getPosition(JWTtoken);
+        if (user?.orgId == null) {
+            return {
+                status: statusCodes.BAD_REQUEST,
+            };
+        }
+        if (status == statusCodes.OK && user) {
+            await prisma.tempSection.deleteMany({
+                where: {
+                    orgId: user.orgId,
+                    id: id
+                },
+            });
+            return {
+                status: statusCodes.OK,
+            };
+        } else {
+            return {
+                status: status,
+            };
+        }
+    } catch (error) {
+        return {
+            status: statusCodes.INTERNAL_SERVER_ERROR,
+        };
+    }
 }

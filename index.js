@@ -17,8 +17,9 @@ const labF = require("./lib/functions/lab.js");
 const { sendVerificationEmail } = require("./lib/emailutils.js");
 const { leaderRouter } = require("./routes/leader.js");
 const { chatRouter } = require('./routes/chatbot.js')
-const { suggestTimetable, saveTimetable,getTimetable,recommendCourse, deleteSection,peekTimetable, updateTimetable } = require("./lib/functions/makeTimetable");
-const panel=require('./lib/functions/admin')
+const { suggestTimetable, saveTimetable,getTimetable,recommendCourse, deleteSection,peekTimetable,deleteTempTable, updateTimetable,createTemptable,peekTempTable } = require("./lib/functions/makeTimetable");
+const panel=require('./lib/functions/admin');
+// const { message } = require("antd");
 app.use(express.json());
 app.use(
   cors({
@@ -829,12 +830,11 @@ app.post("/api/sections/peek", async (req, res) => {
 
 app.put("/api/sections", async (req, res) => {
   const token = req.headers.authorization?.split(" ")[1];
-  const {id, section,name } = req.body;
-  console.log(id,section,name)
-  if(!token||!id||!section||!name)
+  const {id, section,name,teachers,rooms } = req.body;
+  if(!token||!id||!section||!name||!teachers||!rooms)
     return res.status(200).json({
       status: 400,
-      message: "Token,id,section and name required",
+      message: "Token,id,section,name and teachers required",
     });
 
   try {
@@ -844,6 +844,8 @@ app.put("/api/sections", async (req, res) => {
       id,
       name,
       section,
+      teachers,
+      rooms
     );
     res.status(200).json({ status: result.status });
   } catch (error) {
@@ -862,7 +864,8 @@ app.post("/api/saveTimetable",async (req,res)=>{
     });
     try {
       const result = await saveTimetable(token,name,courses, teachers, rooms,electives,labs, semester, defaultRooms,timetable,roomTimetable,courseTimetable);
-      res.status(200).json({ status: result.data.status});
+      console.log("results",result)
+      res.status(200).json({ status: result.status,message:result.section});
     } catch (error) {
       res.status(200).json({ status: 500, message: "Server error" });
     }
@@ -1019,6 +1022,98 @@ app.get("/health", (_, res) => {
   return res.json({
     msg: "Server is healthy !!",
   });
+});
+
+app.post("/api/createTempTable", async (req, res) => {
+  const token = req.headers.authorization?.split(" ")[1];
+  const { data } = req.body;
+  if (!token || !data) {
+    return res.status(200).json({
+      status: 400,
+      message: "Token and data are required",
+    });
+  }
+
+  try {
+    const result = await createTemptable(token, data);
+    res.status(200).json({ 
+      status: result.status, 
+      returnVal: result.returnVal 
+    });
+  } catch (error) {
+    res.status(200).json({ status: 500, message: "Server error" });
+  }
+});
+
+app.post("/api/tempSection/peek", async (req, res) => {
+  const token = req.headers.authorization?.split(" ")[1];
+  const { id } = req.body;
+  if (!token || !id) {
+    return res.status(200).json({
+      status: 400,
+      message: "Token and id are required",
+    });
+  }
+
+  try {
+    const result = await peekTempTable(token, id);
+    res.status(200).json({ 
+      status: result.status, 
+      message: result.retVal 
+    });
+  } catch (error) {
+    res.status(200).json({ status: 500, message: "Server error" });
+  }
+});
+
+app.get("/api/rooms/consolidated", async (req, res) => {
+  const token = req.headers.authorization?.split(" ")[1];
+  if (!token) {
+    return res.status(200).json({ status: 400, message: "Token is required" });
+  }
+
+  try {
+    const result = await room.getConsolidated(token);
+    res.status(200).json({ status: result.status, consolidatedTable: result.consolidatedTable });
+  } catch (error) {
+    res.status(200).json({ status: 500, message: "Server error" });
+  }
+});
+app.post("/api/courses/peekWithCode", async (req, res) => {
+  const token = req.headers.authorization?.split(" ")[1];
+  const { name, semester, department } = req.body;
+  console.log(token,name,semester,department)
+  if (!token || !name || semester === undefined) {
+    return res
+      .status(200)
+      .json({ status: 400, message: "Token, name, and semester are required" });
+  }
+
+  try {
+    const result = await course.peekCourseWithCode(token, name, semester, department);
+    res.status(200).json({ status: result.status, message: result.course });
+  } catch (error) {
+    res.status(200).json({ status: 500, message: "Server error" });
+  }
+});
+app.delete("/api/tempSection", async (req, res) => {
+  const token = req.headers.authorization?.split(" ")[1];
+  const { id } = req.body;
+  console.log("id is ",id)
+  if (!token || !id) {
+    return res
+      .status(200)
+      .json({ status: 400, message: "Token and id are required" });
+  }
+
+  try {
+    const result = await deleteTempTable(token, id);
+    res
+      .status(200)
+      .json({ status: result.status, message: "Temporary section deleted successfully" });
+  } catch (error) {
+    res.status(200).json({ status: 500, message: "Server error" });
+  }
 });
 
 app.listen(port, () => {
