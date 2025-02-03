@@ -499,12 +499,11 @@ export async function peekTeacher(
     };
   }
 }
-
 export async function peekTeacherWithInitials(
   token: string,
-  name: [string],
+  name: string,
   department: string | null = null
-): Promise<{ status: number; teacher: any }> {
+): Promise<{ status: number; teacher: Teacher | null }> {
   try {
     //get position of user
     const { status, user } = await auth.getPosition(token);
@@ -519,9 +518,9 @@ export async function peekTeacherWithInitials(
     //if verification of rules is okay, perform the following
     if (status == statusCodes.OK && user) {
       let teacher 
-      teacher=await prisma.teacher.findMany({
+      teacher=await prisma.teacher.findFirst({
         where: {
-          initials: {in:name},
+          initials: name,
           orgId: user.orgId,
         },
         select: {
@@ -544,7 +543,8 @@ export async function peekTeacherWithInitials(
           status: statusCodes.OK,
           teacher: 
                   {
-                    ...teacher
+                    ...teacher,
+                    alternateDepartments: teacher.alternateDepartments.map(dep => dep.name)
                   }
         };
       return{
